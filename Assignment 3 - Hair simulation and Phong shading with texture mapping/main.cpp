@@ -1,0 +1,1220 @@
+﻿#include "mesh.h"
+#include "glew.h"
+#include "glut.h"
+#include "FreeImage.h"
+#include <math.h>
+#include <fstream>
+#include <iostream>
+using namespace std;
+
+int cnt = 0,w,h;
+int program;
+//int MyShader
+//int hair_program, seg_program, gravity_program;
+float hair_len = 0.5f;
+int hair_seg = 15;
+float hair_gravity = 0.0;
+GLhandleARB MyShader;
+
+
+float win;
+
+//object
+mesh *object1[50];
+char tex_name[50][30];
+
+GLfloat scale_value[50][3] = { 0 };
+GLfloat rotation[50][4] = { 0 };
+GLfloat transfer[50][3] = { 0 };
+
+int windowSize[2];
+
+//mouse control
+GLfloat old_x = 0 , crtl_x[50] = { 0 }, rec_x =  0 ;
+GLfloat old_y =  0 , crtl_y[50] = { 0 }, rec_y =  0 ;
+int select=-1;
+
+
+//keyboard control
+GLfloat z=0.0f;
+GLfloat old_z=0.0f;
+GLfloat radius;
+
+//viewing
+GLfloat eye[3] = { 0 };
+GLfloat vat[3] = { 0 };
+GLfloat vup[3] = { 0 };
+GLfloat fovy = 0, dnear = 0, dfar = 0;
+GLfloat viewport[4] = { 0 };
+
+//lighting
+GLfloat light_specular[8][4] = { 0 };
+GLfloat light_diffuse[8][4] = { 0 };
+GLfloat light_ambient[8][4] = { 0 };
+GLfloat light_position[8][4] = { 0 };
+GLfloat ambient[4] = { 0 };
+int light_cnt = 0;
+
+//texture mapping
+GLuint tex_object[50];
+int use_tex[50] = { 0 };
+//int load_num[50][6] = { 0 }; // [object][tex_num]
+int tex_cnt = 0;
+
+//camera motion
+int botton;
+int angle = 0;
+int rot = 0;
+int dis_x, dis_z;
+void zoom(GLfloat);
+
+//function
+void view_load();
+void light_load();
+void obj_load();
+void tex_load(char*);
+
+bool ShaderLoad(GLhandleARB, char*, GLenum);
+void LoadShaders();
+void viewing();
+void lighting();
+void display();
+void reshape(GLsizei, GLsizei);
+void keyboard(unsigned char, int, int);
+void mouse(int, int, int, int);
+void MotionMouse(int, int);
+void setShaders();
+char *textFileRead(char *);
+void printShaderInfoLog(GLuint);
+void printProgramInfoLog(GLuint);
+
+int main(int argc, char** argv)
+{
+	
+	view_load();
+	light_load();
+
+	glutInit(&argc, argv);
+	glutInitWindowSize(w, h);
+	glutInitWindowPosition(0, 0);
+	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB| GLUT_DEPTH);
+	glutCreateWindow("Test Scene1");
+	glewInit();
+
+	obj_load();
+	
+	setShaders();
+	LoadShaders();
+
+	glutDisplayFunc(display);
+	glutReshapeFunc(reshape);
+	glutKeyboardFunc(keyboard);
+	glutMouseFunc(mouse);
+	glutMotionFunc(MotionMouse);
+	glutMainLoop();
+
+	return 0;
+}
+
+void tex_load(char* filename){
+	
+	FIBITMAP* pimage = FreeImage_Load(FreeImage_GetFileType(filename, 0), filename);
+	FIBITMAP* p32bitsImage = FreeImage_ConvertTo32Bits(pimage);
+	int iwidth = FreeImage_GetWidth(p32bitsImage);
+	int iheight = FreeImage_GetHeight(p32bitsImage);
+
+	glBindTexture(GL_TEXTURE_2D, tex_object[tex_cnt]);   ////////////
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iwidth, iheight, 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage));
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+	
+	FreeImage_Unload(p32bitsImage);
+	FreeImage_Unload(pimage);
+}
+
+
+void view_load(){
+
+
+	fstream viewing;
+	viewing.open("peter.view", ios::in);
+	char c[100];
+	while (viewing >> c){
+		cout << c << endl;
+		if (!strcmp(c, "eye"))
+			for (size_t i = 0; i < 3; i++) viewing >> eye[i];
+		if (!strcmp(c, "vat"))
+			for (size_t i = 0; i < 3; i++) viewing >> vat[i];
+		if (!strcmp(c, "vup"))
+			for (size_t i = 0; i < 3; i++) viewing >> vup[i];
+		if (!strcmp(c, "fovy")) viewing >> fovy;
+		if (!strcmp(c, "dnear")) viewing >> dnear;
+		if (!strcmp(c, "dfar")) viewing >> dfar;
+		if (!strcmp(c, "viewport")){
+			for (size_t i = 0; i < 4; i++){
+				viewing >> viewport[i];
+				w = viewport[2];
+				h = viewport[3];
+				//cout << "viewport[" << i << "] = " << viewport[i] << endl;
+			}
+		}
+	}
+	for (size_t i = 0; i < 3; i++) cout << "read: " << eye[i] << " ";
+	for (size_t i = 0; i < 4; i++) cout << "viewport[" << i << "] = " << viewport[i] << endl;
+	cout << endl;
+	
+	cout << "In view_load: " << endl;
+	cout << "viewport[2]: " << viewport[2] << endl;
+	cout << "viewport[3]: " << viewport[3] << endl;
+
+	radius = sqrtf(pow(eye[0] - vat[0], 2) + pow(eye[2] - vat[2], 2));
+
+	angle = atan((double)(eye[0] - vat[0]) / (eye[2] - vat[2])) * 180 / 3.1415926;
+	w = viewport[2];
+	h = viewport[3];
+	win = w * h;
+	viewing.close();
+}
+void viewing(){
+
+	
+	cout << "view_x: " << eye[0] << " center_x: " << vat[0] << endl;
+	cout << "view_z: " << eye[2] << " center_z: " << vat[2] << endl;
+	cout << "Angle: " << angle << endl;
+	//zoom
+
+	if (z != 0){
+		radius += z;
+		z = 0;
+	}
+	if (rot != 0){
+		angle += rot;
+		angle %= 360;
+		rot = 0;
+	}
+	eye[0] = vat[0] + radius*(GLfloat)sin(angle*(3.1415926) / 180);
+	eye[2] = vat[2] + radius*(GLfloat)cos(angle*(3.1415926) / 180);
+	//---------------viewing-------------------
+	// viewport transformation
+	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+
+	// projection transformation
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(fovy, viewport[2] / viewport[3], dnear, dfar);
+	// viewing and modeling transformation
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	cout << "camera: " << eye[0] << " " << eye[1] << " " << eye[2] << endl;
+	gluLookAt(eye[0], eye[1], eye[2],// eye
+	vat[0], vat[1], vat[2],     // center
+	vup[0], vup[1], vup[2]);    // up
+	//------------------------------------------
+	
+}
+
+void light_load()
+{
+	fstream light;
+	light.open("peter.light", ios::in);
+	char c[100];
+	int j = 0;
+
+	while (light >> c){
+		if (!strcmp(c, "light")) {
+			cout << j << " light " << endl;
+			//position
+			for (size_t i = 0; i < 3; i++)	{
+				light >> (GLfloat)light_position[j][i];
+				cout << light_position[j][i] << " ";
+			}
+			cout << endl;
+			light_position[j][3] = (GLfloat)1.0;
+			//ambient
+			for (size_t i = 0; i < 3; i++)	{
+				light >> (GLfloat)light_ambient[j][i];
+				cout << light_ambient[j][i] << " ";
+			}
+			cout << endl;
+			light_ambient[j][3] = (GLfloat)0.0;
+			//diffuse
+			for (size_t i = 0; i < 3; i++)	{
+				light >> (GLfloat)light_diffuse[j][i];
+				cout << light_diffuse[j][i] << " ";
+			}
+			cout << endl;
+			light_diffuse[j][3] = (GLfloat)0.0;
+			//specular
+			for (size_t i = 0; i < 3; i++)	{
+				light >> (GLfloat)light_specular[j][i];
+				cout << light_specular[j][i] << " ";
+			}
+			cout << endl;
+			light_specular[j][3] = (GLfloat)0.0;
+
+			j++;
+			//light >> c;
+		}
+		else if (!strcmp(c, "ambient")){
+			for (size_t i = 0; i < 3; i++) light >> (GLfloat)ambient[i];
+			ambient[3] = (GLfloat)0.0;
+			//light >> c;
+		}
+	}
+	light_cnt = j;
+	light.close();
+}
+void lighting(){
+	glShadeModel(GL_SMOOTH);
+
+	// z buffer enable
+	glEnable(GL_DEPTH_TEST);
+
+	// enable lighting
+	glEnable(GL_LIGHTING);
+	// set light property
+	
+	for (int i = 0; i < light_cnt; i++){
+		glLightfv(GL_LIGHT0+i, GL_POSITION, light_position[i]);
+		glLightfv(GL_LIGHT0+i, GL_DIFFUSE, light_diffuse[i]);
+		glLightfv(GL_LIGHT0+i, GL_SPECULAR, light_specular[i]);
+		glLightfv(GL_LIGHT0+i, GL_AMBIENT, light_ambient[i]);
+
+		glEnable(GL_LIGHT0+i);
+	}
+	
+	glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambient);
+}
+
+
+void obj_load(){
+
+	fstream obj;
+	obj.open("peter.scene", ios::in);
+	char c[100];
+	char filename[50];
+	int obj_num = 0;
+	int n;
+	//test
+	FreeImage_Initialise();
+	while (obj >> c){
+		if (!strcmp(c, "no-texture")){
+			n = -1;
+		}
+
+		if (!strcmp(c, "single-texture")){
+			obj >> filename;
+			strcpy(tex_name[tex_cnt], filename);
+			glGenTextures(1, &tex_object[tex_cnt]);
+			tex_load(filename);
+			cout << "single-texture: " << filename << " " << tex_object[tex_cnt] << endl;
+			tex_cnt++;
+			
+			n = 1;
+		}
+		
+		if (!strcmp(c, "multi-texture")){
+			
+			
+			glGenTextures(2, &tex_object[tex_cnt]);
+			for (size_t i = 0; i < 2; i++){
+				
+				obj >> filename;
+				strcpy(tex_name[tex_cnt], filename);
+				tex_load(filename);
+				cout << "multi-texture: " << filename << " " << tex_object[tex_cnt++] << endl;
+				
+			}
+			tex_load(filename);
+			
+			n = 2;
+		}
+		
+		if (!strcmp(c, "cube-map")){
+			
+			int a = tex_cnt;
+			
+			FIBITMAP* pimage[6];
+			FIBITMAP* p32bitsImage[6] ;
+			int iwidth[6];
+			int iheight[6] ;
+
+			glGenTextures(1, &tex_object[tex_cnt]);
+			glBindTexture(GL_TEXTURE_CUBE_MAP, tex_object[tex_cnt]);   ////////////
+			glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			
+			for (size_t i = 0; i < 6; i++){
+				obj >> filename;
+				strcpy(tex_name[tex_cnt], filename);
+				pimage[i] = FreeImage_Load(FreeImage_GetFileType(filename, 0), filename);
+				p32bitsImage[i] = FreeImage_ConvertTo32Bits(pimage[i]);
+				iwidth[i] = FreeImage_GetWidth(p32bitsImage[i]);
+				iheight[i] = FreeImage_GetHeight(p32bitsImage[i]);
+				cout << filename << endl;
+				
+				if (i == 0)
+					glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, GL_RGBA, iwidth[i], iheight[i], 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage[i]));
+				else if (i == 1)
+					glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGBA, iwidth[i], iheight[i], 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage[i]));
+				else if (i == 2)
+					glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGBA, iwidth[i], iheight[i], 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage[i]));
+				else if (i == 3)
+					glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGBA, iwidth[i], iheight[i], 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage[i]));
+				else if (i == 4)
+					glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGBA, iwidth[i], iheight[i], 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage[i]));
+				else if (i == 5)
+					glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGBA, iwidth[i], iheight[i], 0, GL_BGRA, GL_UNSIGNED_BYTE, (void*)FreeImage_GetBits(p32bitsImage[i]));
+				
+				glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+				cout << "cube-map: " << filename << " " << tex_object[tex_cnt++] << endl;
+				
+			}
+			
+			glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+
+			for (size_t i = 0; i < 6; i++) FreeImage_Unload(p32bitsImage[i]);
+			for (size_t i = 0; i < 6; i++)FreeImage_Unload(pimage[i]);
+			//cout << filename << endl;
+			//cube_load(filename, 5);
+			//strcpy(tex_name[tex_cnt], filename);
+			//FreeImage_DeInitialise();
+			n = 6;
+		}
+		
+		if (!strcmp(c, "model")){
+			char name[20];
+
+			obj >> name;
+			cout << name;
+			object1[cnt] = new mesh(name);
+			for (size_t i = 0; i < 3; i++) {
+				obj >> (GLfloat)scale_value[cnt][i];
+				cout << scale_value[cnt][i] << " ";
+			}
+			for (size_t i = 0; i < 4; i++) {
+				obj >> (GLfloat)rotation[cnt][i];
+				cout << rotation[cnt][i] << " ";
+			}
+			for (size_t i = 0; i < 3; i++) {
+				obj >> (GLfloat)transfer[cnt][i];
+				cout << transfer[cnt][i] << " ";
+			}
+			use_tex[cnt] = n;
+			obj_num++;
+			cnt++;
+			cout << endl;
+			n = 0;
+		}	
+	}
+	FreeImage_DeInitialise();
+	cout << "object_tex: " << endl;
+	for (size_t i = 0; i < obj_num; i++) cout << use_tex[i] << " ";
+	cout << endl;
+	obj.close();
+}
+
+void draw_ball(){
+	int use = 0;
+	int flag = 0;
+	int use_tex1[50] = { 0 };
+	for (size_t i = 0; i < 50; i++) use_tex1[i] = use_tex[i];
+	int j = 0;
+				glPushMatrix();
+				glTranslatef(transfer[j][0] + crtl_x[j], transfer[j][1] - crtl_y[j], transfer[j][2]);
+				glRotatef(rotation[j][0], rotation[j][1], rotation[j][2], rotation[j][3]);
+				glScalef(scale_value[j][0], scale_value[j][1], scale_value[j][2]);
+			
+			int lastMaterial = -1;
+			for (size_t i = 0; i < object1[j]->fTotal; ++i)
+			{
+				// set material property if this face used different material
+				int tmp_num = 1;
+				
+				if (lastMaterial != object1[j]->faceList[i].m)
+				{
+					lastMaterial = (int)object1[j]->faceList[i].m;
+					glMaterialfv(GL_FRONT, GL_AMBIENT, object1[j]->mList[lastMaterial].Ka);
+					glMaterialfv(GL_FRONT, GL_DIFFUSE, object1[j]->mList[lastMaterial].Kd);
+					glMaterialfv(GL_FRONT, GL_SPECULAR, object1[j]->mList[lastMaterial].Ks);
+					glMaterialfv(GL_FRONT, GL_SHININESS, &object1[j]->mList[lastMaterial].Ns);
+
+					//you can obtain the texture name by object->mList[lastMaterial].map_Kd
+					//load them once in the main function before mainloop
+					//bind them in display function here
+					
+
+					//cout << "obj texture: " << object1[j]->mList[lastMaterial].map_Kd << endl;
+					cout << "use: " << use << endl;
+					if (use_tex1[j] == 1){
+						cout << "texture: " << tex_name[use] << endl;
+						//cout << "111111111111" << endl;
+							glActiveTexture(GL_TEXTURE0);
+							glEnable(GL_TEXTURE_2D);
+							glEnable(GL_ALPHA_TEST);
+							glAlphaFunc(GL_GREATER, 0.5f);
+							glBindTexture(GL_TEXTURE_2D, tex_object[use]);
+							glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+							cout << "done" << endl;
+							
+					}
+					else if (use_tex1[j] == 2){
+						//cout << "22222222222222" << endl;
+						cout << "texture 1: " << tex_name[use] << endl;
+						//bind texture 0
+						glActiveTexture(GL_TEXTURE0);
+						glEnable(GL_TEXTURE_2D);
+						glEnable(GL_ALPHA_TEST);
+						glAlphaFunc(GL_GREATER, 0.5f);
+						glBindTexture(GL_TEXTURE_2D, tex_object[use]);
+						glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+						glTexEnvf(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+
+						//bind texture 1
+						cout << "texture 2: " << tex_name[use+1] << endl;
+						//cout << tex_object[use + 1] << endl;
+						glActiveTexture(GL_TEXTURE1);
+						glEnable(GL_TEXTURE_2D);
+						glEnable(GL_ALPHA_TEST);
+						glAlphaFunc(GL_GREATER, 0.5f);
+						glBindTexture(GL_TEXTURE_2D, tex_object[use+1]);
+						glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+						glTexEnvf(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+
+					}
+					else if (use_tex1[j]==6){
+						cout << "Texture 1:" << tex_name[use] << endl;
+						cout << "Texture 2:" << tex_name[use+1] << endl;
+						cout << "Texture 3:" << tex_name[use+2] << endl;
+						cout << "Texture 4:" << tex_name[use+3] << endl;
+						cout << "Texture 5:" << tex_name[use+4] << endl;
+						cout << "Texture 6:" << tex_name[use+5] << endl;
+
+						glActiveTexture(GL_TEXTURE0);
+						glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+						glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+						glTexGeni(GL_R, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+						glEnable(GL_TEXTURE_GEN_S);
+						glEnable(GL_TEXTURE_GEN_T);
+						glEnable(GL_TEXTURE_GEN_R);
+						glEnable(GL_TEXTURE_CUBE_MAP);
+						glBindTexture(GL_TEXTURE_CUBE_MAP, tex_object[use]);
+						glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+						
+						//use_tex1[j] = 1;
+					}
+					
+					if (use_tex1[j + 1] == 0){
+						use_tex1[j + 1] = use_tex1[j];
+						use = use;
+						//if(flag==0)flag = use_tex[j];
+					}
+					else {
+						//if(flag) use += flag;
+						if (use_tex1[j] != -1)use += use_tex1[j];
+						//flag = 0;
+					}
+
+				}
+				if (use_tex1[j] == 1){
+					glBegin(GL_QUADS);
+					for (size_t k = 0; k < 3; ++k)
+					{
+						//textex corrd. object->tList[object->faceList[i][j].t].ptr
+
+						glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					glEnd();
+				}
+				else if (use_tex1[j] == 2){
+					glBegin(GL_QUADS);
+					for (size_t k = 0; k < 3; ++k)
+					{
+						//textex corrd. object->tList[object->faceList[i][j].t].ptr
+
+						glMultiTexCoord3fv(GL_TEXTURE0, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glMultiTexCoord3fv(GL_TEXTURE1, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					glEnd();
+
+				}
+
+				else if (use_tex1[j] == 6){
+					glBegin(GL_QUADS);
+					for (size_t k = 0; k < 3; ++k)
+					{
+						//textex corrd. object->tList[object->faceList[i][j].t].ptr
+
+						glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					glEnd();
+					
+				}
+
+				glBegin(GL_TRIANGLES);
+				for (size_t k = 0; k < 3; ++k)
+				{
+					//textex corrd. object->tList[object->faceList[i][j].t].ptr
+					if (use_tex1[j] == 1)
+					{
+						glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					else if (use_tex1[j] == 2){
+						glMultiTexCoord3fv(GL_TEXTURE0, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glMultiTexCoord3fv(GL_TEXTURE1, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					else if (use_tex1[j] == 6){
+						glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					else {
+						//glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+						glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+						glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+					}
+					
+				}
+				glEnd();
+				
+			}
+
+			if (use_tex1[j] == 1){
+				glActiveTexture(GL_TEXTURE0);
+				glDisable(GL_TEXTURE_2D);
+				glBindTexture(GL_TEXTURE_2D, 0);
+			}
+			else if (use_tex1[j] == 2){
+				
+				glActiveTexture(GL_TEXTURE1);
+				glDisable(GL_TEXTURE_2D);
+				glBindTexture(GL_TEXTURE_2D, 0);
+
+				glActiveTexture(GL_TEXTURE0);
+				glDisable(GL_TEXTURE_2D);
+				glBindTexture(GL_TEXTURE_2D, 0);
+				
+			}
+			else if (use_tex1[j] == 6){
+				glActiveTexture(GL_TEXTURE0);
+				glDisable(GL_TEXTURE_GEN_S);
+				glDisable(GL_TEXTURE_GEN_T);
+				glDisable(GL_TEXTURE_GEN_R);
+				glDisable(GL_TEXTURE_CUBE_MAP);
+				glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+			}
+
+			glPopMatrix();
+		
+
+		//use = 0;
+			
+		
+}
+
+void draw_hair(){
+	int use = 0;
+	int flag = 0;
+	int use_tex1[50] = { 0 };
+	for (size_t i = 0; i < 50; i++) use_tex1[i] = use_tex[i];
+	int j = 1;
+		glPushMatrix();
+		glTranslatef(transfer[j][0] + crtl_x[j], transfer[j][1] - crtl_y[j], transfer[j][2]);
+		glRotatef(rotation[j][0], rotation[j][1], rotation[j][2], rotation[j][3]);
+		glScalef(scale_value[j][0], scale_value[j][1], scale_value[j][2]);
+
+		int lastMaterial = -1;
+		for (size_t i = 0; i < object1[j]->fTotal; ++i)
+		{
+			// set material property if this face used different material
+			int tmp_num = 1;
+
+			if (lastMaterial != object1[j]->faceList[i].m)
+			{
+				lastMaterial = (int)object1[j]->faceList[i].m;
+				glMaterialfv(GL_FRONT, GL_AMBIENT, object1[j]->mList[lastMaterial].Ka);
+				glMaterialfv(GL_FRONT, GL_DIFFUSE, object1[j]->mList[lastMaterial].Kd);
+				glMaterialfv(GL_FRONT, GL_SPECULAR, object1[j]->mList[lastMaterial].Ks);
+				glMaterialfv(GL_FRONT, GL_SHININESS, &object1[j]->mList[lastMaterial].Ns);
+
+				//you can obtain the texture name by object->mList[lastMaterial].map_Kd
+				//load them once in the main function before mainloop
+				//bind them in display function here
+
+
+				//cout << "obj texture: " << object1[j]->mList[lastMaterial].map_Kd << endl;
+				cout << "use: " << use << endl;
+				if (use_tex1[j] == 1){
+					cout << "texture: " << tex_name[use] << endl;
+					//cout << "111111111111" << endl;
+					glActiveTexture(GL_TEXTURE0);
+					glEnable(GL_TEXTURE_2D);
+					glEnable(GL_ALPHA_TEST);
+					glAlphaFunc(GL_GREATER, 0.5f);
+					glBindTexture(GL_TEXTURE_2D, tex_object[use]);
+					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+					cout << "done" << endl;
+
+				}
+				else if (use_tex1[j] == 2){
+					//cout << "22222222222222" << endl;
+					cout << "texture 1: " << tex_name[use] << endl;
+					//bind texture 0
+					glActiveTexture(GL_TEXTURE0);
+					glEnable(GL_TEXTURE_2D);
+					glEnable(GL_ALPHA_TEST);
+					glAlphaFunc(GL_GREATER, 0.5f);
+					glBindTexture(GL_TEXTURE_2D, tex_object[use]);
+					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+					glTexEnvf(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+
+					//bind texture 1
+					cout << "texture 2: " << tex_name[use + 1] << endl;
+					//cout << tex_object[use + 1] << endl;
+					glActiveTexture(GL_TEXTURE1);
+					glEnable(GL_TEXTURE_2D);
+					glEnable(GL_ALPHA_TEST);
+					glAlphaFunc(GL_GREATER, 0.5f);
+					glBindTexture(GL_TEXTURE_2D, tex_object[use + 1]);
+					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+					glTexEnvf(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+
+				}
+				else if (use_tex1[j] == 6){
+					cout << "Texture 1:" << tex_name[use] << endl;
+					cout << "Texture 2:" << tex_name[use + 1] << endl;
+					cout << "Texture 3:" << tex_name[use + 2] << endl;
+					cout << "Texture 4:" << tex_name[use + 3] << endl;
+					cout << "Texture 5:" << tex_name[use + 4] << endl;
+					cout << "Texture 6:" << tex_name[use + 5] << endl;
+
+					glActiveTexture(GL_TEXTURE0);
+					glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+					glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+					glTexGeni(GL_R, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+					glEnable(GL_TEXTURE_GEN_S);
+					glEnable(GL_TEXTURE_GEN_T);
+					glEnable(GL_TEXTURE_GEN_R);
+					glEnable(GL_TEXTURE_CUBE_MAP);
+					glBindTexture(GL_TEXTURE_CUBE_MAP, tex_object[use]);
+					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+
+					//use_tex1[j] = 1;
+				}
+
+				if (use_tex1[j + 1] == 0){
+					use_tex1[j + 1] = use_tex1[j];
+					use = use;
+					//if(flag==0)flag = use_tex[j];
+				}
+				else {
+					//if(flag) use += flag;
+					if (use_tex1[j] != -1)use += use_tex1[j];
+					//flag = 0;
+				}
+
+			}
+			if (use_tex1[j] == 1){
+				glBegin(GL_QUADS);
+				for (size_t k = 0; k < 3; ++k)
+				{
+					//textex corrd. object->tList[object->faceList[i][j].t].ptr
+
+					glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+				glEnd();
+			}
+			else if (use_tex1[j] == 2){
+				glBegin(GL_QUADS);
+				for (size_t k = 0; k < 3; ++k)
+				{
+					//textex corrd. object->tList[object->faceList[i][j].t].ptr
+
+					glMultiTexCoord3fv(GL_TEXTURE0, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glMultiTexCoord3fv(GL_TEXTURE1, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+				glEnd();
+
+			}
+
+			else if (use_tex1[j] == 6){
+				glBegin(GL_QUADS);
+				for (size_t k = 0; k < 3; ++k)
+				{
+					//textex corrd. object->tList[object->faceList[i][j].t].ptr
+
+					glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+				glEnd();
+
+			}
+
+			glBegin(GL_TRIANGLES);
+			for (size_t k = 0; k < 3; ++k)
+			{
+				//textex corrd. object->tList[object->faceList[i][j].t].ptr
+				if (use_tex1[j] == 1)
+				{
+					glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+				else if (use_tex1[j] == 2){
+					glMultiTexCoord3fv(GL_TEXTURE0, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glMultiTexCoord3fv(GL_TEXTURE1, object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+				else if (use_tex1[j] == 6){
+					glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+				else {
+					//glTexCoord2fv(object1[j]->tList[object1[j]->faceList[i][k].t].ptr);
+					glNormal3fv(object1[j]->nList[object1[j]->faceList[i][k].n].ptr);
+					glVertex3fv(object1[j]->vList[object1[j]->faceList[i][k].v].ptr);
+				}
+
+			}
+			glEnd();
+
+		}
+
+		if (use_tex1[j] == 1){
+			glActiveTexture(GL_TEXTURE0);
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+		else if (use_tex1[j] == 2){
+
+			glActiveTexture(GL_TEXTURE1);
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+
+			glActiveTexture(GL_TEXTURE0);
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+
+		}
+		else if (use_tex1[j] == 6){
+			glActiveTexture(GL_TEXTURE0);
+			glDisable(GL_TEXTURE_GEN_S);
+			glDisable(GL_TEXTURE_GEN_T);
+			glDisable(GL_TEXTURE_GEN_R);
+			glDisable(GL_TEXTURE_CUBE_MAP);
+			glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+		}
+
+		glPopMatrix();
+	
+
+	//use = 0;
+
+
+}
+void setShaders()
+{
+	int vertShader, geomShader, fragShader;
+	char *vertSource = NULL, *geomSource = NULL, *fragSource = NULL;
+
+	//First, create our shaders 
+	vertShader = glCreateShader(GL_VERTEX_SHADER);
+	geomShader = glCreateShader(GL_GEOMETRY_SHADER);
+	fragShader = glCreateShader(GL_FRAGMENT_SHADER);
+
+	//Read in the programs
+	vertSource = textFileRead("../Examples/VertexNormalVisualizer/VertexNormalVisualizer.vert");
+	geomSource = textFileRead("../Examples/VertexNormalVisualizer/VertexNormalVisualizer.geom");
+	fragSource = textFileRead("../Examples/VertexNormalVisualizer/VertexNormalVisualizer.frag");
+
+	//Setup a few constant pointers for below
+	const char *vv = vertSource;
+	const char *gg = geomSource;
+	const char *ff = fragSource;
+
+	glShaderSource(vertShader, 1, &vv, NULL);
+	glShaderSource(geomShader, 1, &gg, NULL);
+	glShaderSource(fragShader, 1, &ff, NULL);
+
+	free(vertSource);
+	free(geomSource);
+	free(fragSource);
+
+	glCompileShader(vertShader);
+	glCompileShader(geomShader);
+	glCompileShader(fragShader);
+
+	program = glCreateProgram();
+
+	glAttachShader(program, vertShader);
+	glAttachShader(program, geomShader);
+	glAttachShader(program, fragShader);
+
+	glLinkProgram(program);
+
+	printShaderInfoLog(vertShader);
+	printShaderInfoLog(geomShader);
+	printShaderInfoLog(fragShader);
+	printProgramInfoLog(program);
+
+	//You can use glUseProgram(program) whenever you want to render something with the program.
+	//If you want to render with the fixed pipeline, use glUseProgram(0).
+
+}
+
+bool ShaderLoad(GLhandleARB programId, char* shaderSrc, GLenum shaderType)
+{
+	FILE *fp;
+	GLhandleARB h_shader;
+	GLcharARB *shader_string;
+	GLint str_length, maxLength;
+	GLint isCompiled = GL_FALSE, isLinked = GL_FALSE;
+	GLcharARB *pInfoLog;
+
+	// open the file of shader source code
+	if ((fp = fopen(shaderSrc, "r")) == NULL)
+	{
+		fprintf(stderr, "Error : Failed to read the OpenGL shader source \"%s\".\n", shaderSrc);
+		return false;
+	}
+
+	// allocate memory for program string and load it.
+	shader_string = (GLcharARB*)malloc(sizeof(GLcharARB) * 65536);
+	str_length = (GLint)fread(shader_string, 1, 65536, fp);
+	fclose(fp);
+
+	// Create and load shader string.
+	h_shader = glCreateShader(shaderType);
+	if (h_shader == 0)
+	{
+		fprintf(stderr, "Error : Failed to create OpenGL shader object \"%s\".\n", shaderSrc);
+		return false;
+	}
+	glShaderSource(h_shader, 1, (const GLcharARB**)&shader_string, &str_length);
+	free(shader_string);
+
+	// Compile the vertex shader, print out the compiler log message.
+	glCompileShader(h_shader);
+
+	// get compile state information
+	glGetObjectParameterivARB(h_shader, GL_OBJECT_COMPILE_STATUS_ARB, &isCompiled);
+
+	if (!isCompiled)
+	{
+		fprintf(stderr, "Error : Failed to compile OpenGL shader source \"%s\".\n", shaderSrc);
+		glGetObjectParameterivARB(h_shader, GL_OBJECT_INFO_LOG_LENGTH_ARB, &maxLength);
+		pInfoLog = (GLcharARB *)malloc(maxLength * sizeof(GLcharARB));
+		glGetInfoLogARB(h_shader, maxLength, &str_length, pInfoLog);
+		fprintf(stderr, "%s\n", pInfoLog);
+		free(pInfoLog);
+		return false;
+	}
+	glAttachShader(programId, h_shader);
+
+	// delete the shader object, since we have attached it with the program object.
+	glDeleteShader(h_shader);
+
+	// Link the program and print out the linker log message
+	glLinkProgram(programId);
+	glGetObjectParameterivARB(programId, GL_OBJECT_LINK_STATUS_ARB, &isLinked);
+
+	if (!isLinked)
+	{
+		fprintf(stderr, "Error : Failed to link OpenGL shader \"%s\".\n", shaderSrc);
+		glGetObjectParameterivARB(programId, GL_OBJECT_INFO_LOG_LENGTH_ARB, &maxLength);
+		pInfoLog = (GLcharARB *)malloc(maxLength * sizeof(GLcharARB));
+		glGetInfoLogARB(programId, maxLength, &str_length, pInfoLog);
+		fprintf(stderr, "%s\n", pInfoLog);
+		free(pInfoLog);
+		return false;
+	}
+	return true;
+}
+
+void LoadShaders()
+{
+	MyShader = glCreateProgram();
+	if (MyShader != 0)
+	{
+		//cout << "oooooooooooooooooooo" << endl;
+		ShaderLoad(MyShader, "../Examples/PhongShading/PhongShading.vert", GL_VERTEX_SHADER);
+		ShaderLoad(MyShader, "../Examples/PhongShading/PhongShading.frag", GL_FRAGMENT_SHADER);
+	}
+}
+
+
+//Function from: http://www.evl.uic.edu/aej/594/code/ogl.cpp
+//Read in a textfile (GLSL program)
+// we need to pass it as a string to the GLSL driver
+char *textFileRead(char *fn)
+{
+	FILE *fp;
+	char *content = NULL;
+
+	int count = 0;
+
+	if (fn != NULL) {
+
+		fp = fopen(fn, "rt");
+
+		if (fp != NULL) {
+
+			fseek(fp, 0, SEEK_END);
+			count = ftell(fp);
+			rewind(fp);
+
+			if (count > 0) {
+				content = (char *)malloc(sizeof(char) * (count + 1));
+				count = fread(content, sizeof(char), count, fp);
+				content[count] = '\0';
+			}
+			fclose(fp);
+
+		}
+	}
+
+	return content;
+}
+
+//Got this from http://www.lighthouse3d.com/opengl/glsl/index.php?oglinfo
+// it prints out shader info (debugging!)
+void printShaderInfoLog(GLuint obj)
+{
+	int infologLength = 0;
+	int charsWritten = 0;
+	char *infoLog;
+	glGetShaderiv(obj, GL_INFO_LOG_LENGTH, &infologLength);
+	if (infologLength > 0)
+	{
+		infoLog = (char *)malloc(infologLength);
+		glGetShaderInfoLog(obj, infologLength, &charsWritten, infoLog);
+		printf("printShaderInfoLog: %s\n", infoLog);
+		free(infoLog);
+	}
+	else{
+		printf("Shader Info Log: OK\n");
+	}
+}
+
+//Got this from http://www.lighthouse3d.com/opengl/glsl/index.php?oglinfo
+// it prints out shader info (debugging!)
+void printProgramInfoLog(GLuint obj)
+{
+	int infologLength = 0;
+	int charsWritten = 0;
+	char *infoLog;
+	glGetProgramiv(obj, GL_INFO_LOG_LENGTH, &infologLength);
+	if (infologLength > 0)
+	{
+		infoLog = (char *)malloc(infologLength);
+		glGetProgramInfoLog(obj, infologLength, &charsWritten, infoLog);
+		printf("printProgramInfoLog: %s\n", infoLog);
+		free(infoLog);
+	}
+	else{
+		printf("Program Info Log: OK\n");
+	}
+}
+
+void display()
+{
+	// clear the buffer
+	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);      //清除用color
+	glClearDepth(1.0f);                        // Depth Buffer (就是z buffer) Setup
+	glEnable(GL_DEPTH_TEST);                   // Enables Depth Testing
+	glDepthFunc(GL_LEQUAL);                    // The Type Of Depth Test To Do
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);//這行把畫面清成黑色並且清除z buffer
+
+	viewing();
+	//注意light位置的設定，要在gluLookAt之後
+	lighting();
+	//------------Display Objects------------------
+
+
+	/////////////////////////////////
+
+
+
+	///////////////////////////////
+	
+	glUseProgram(MyShader);
+	glUniform1i(glGetUniformLocation(MyShader, "colorTex"), 0);
+	draw_ball();
+
+	//Draw sphere's normal line
+	glEnable(GL_LINE_SMOOTH);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	cout << "hair lengh: " << hair_len << endl;
+	glUseProgram(program);
+	glUniform1f(glGetUniformLocation(program, "len"), hair_len);
+	cout << "hair segments: " << hair_seg << endl;
+	glUniform1i(glGetUniformLocation(program, "num_of_segment"), hair_seg);
+	cout << "hair gravity: " << hair_gravity << endl;
+	glUniform3f(glGetUniformLocation(program, "gravity"), 0.0f, hair_gravity, 0.0f);
+	//glUniform4f(glGetUniformLocation(program, "color"), 0.0f, 0.0f, 0.0f, 1.0f);
+	glDepthMask(GL_FALSE);
+	draw_hair();
+	glDepthMask(GL_TRUE);
+	
+	
+	//texture
+	//Draw object
+	
+	
+	
+
+	glFlush();
+	glutSwapBuffers();
+}
+
+void reshape(GLsizei w, GLsizei h)
+{
+	windowSize[0] = w;
+	windowSize[1] = h;
+}
+
+
+void keyboard(unsigned char key, int x, int y){
+	switch (key){
+		case 'w':{
+			z = (-0.01)*radius ;
+			//radius += z;
+			glutPostRedisplay();
+			break;
+		}
+		case 'a':{
+			rot = (-2);
+			//angle = (angle - 10) % 360;
+			glutPostRedisplay();
+			break; 
+		}
+		case 's':{
+			z = (0.01)*radius;
+			//radius += z;
+			glutPostRedisplay();
+			break;
+		}
+		case 'd':{
+			rot = 2;
+			//angle = (angle + 10) % 360;
+			glutPostRedisplay();
+			break;
+		}
+		case 'r':{
+			hair_len += 0.1f;
+			glutPostRedisplay();
+			break;
+		}
+		case'f':{
+			hair_len -= 0.1f;
+			if (hair_len < 0.0f) hair_len = 0.0f;
+			glutPostRedisplay();
+			break;
+		}
+		case 't':{
+			hair_seg += 1;
+			glutPostRedisplay();
+			break;
+		}
+		case'g':{
+			hair_seg -= 1;
+			if (hair_seg < 0) hair_seg = 0;
+			glutPostRedisplay();
+			break;
+		}
+		case'y':{
+			hair_gravity += 0.1f;
+			glutPostRedisplay();
+			break;
+		}
+		case 'h':{
+			hair_gravity -= 0.1f;
+			glutPostRedisplay();
+			break;
+		}
+		case '1':{
+			select = 0;
+			break;
+		}
+		case '2':{
+			select = 1;
+			break;
+		}
+		case '3':{
+			select = 2;
+			break; 
+		}
+		case '4':{
+			select = 3;
+			break; 
+		}
+		case '5':{
+			select = 4;
+			break; 
+		}
+		case '6':{
+			select = 5;
+			break; 
+		}
+		case '7':{
+			select = 6;
+			break; 
+		}
+		case '8':{
+			select = 7;
+			break; 
+		}
+		case '9':{
+			select = 8;
+			break;
+		}
+		
+		default:
+			break;
+	
+	}
+}
+
+void mouse(int button, int state, int x, int y){
+	if (state){
+		rec_x += (x - old_x);
+		rec_y += (y - old_y);
+	}
+	else{
+		old_x = x;
+		old_y = y;
+	}
+}
+
+void MotionMouse(int x, int y){
+	crtl_x[select] = (float)(x - old_x)/viewport[2]*radius;
+	crtl_y[select] = (float)(y - old_y)/viewport[3]*radius;
+	cout << "x : " << crtl_x[select] << endl;
+	cout << "y : " << crtl_y[select] << endl;
+
+	glutPostRedisplay();
+}
